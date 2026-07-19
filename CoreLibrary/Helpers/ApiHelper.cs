@@ -6,12 +6,14 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Http;
 
 namespace CoreLibrary.Helpers
 {
     public class ApiHelper
     {
         private HttpClient apiClient;
+        private readonly IHttpClientFactory httpClientFactory;
         /// <summary>
         /// Constructor for Api Helper
         /// </summary>
@@ -19,6 +21,20 @@ namespace CoreLibrary.Helpers
         public ApiHelper(string baseAddress)
         {
             InitializeClient(baseAddress);
+        }
+
+        /// <summary>
+        /// Constructor that uses IHttpClientFactory to create the HttpClient.
+        /// Provide a client name when you have registered a named client; otherwise pass null or empty to get a default client.
+        /// </summary>
+        /// <param name="httpClientFactory"></param>
+        /// <param name="clientName"></param>
+        public ApiHelper(IHttpClientFactory httpClientFactory, string clientName = "")
+        {
+            this.httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+            apiClient = this.httpClientFactory.CreateClient(clientName ?? string.Empty);
+            apiClient.DefaultRequestHeaders.Accept.Clear();
+            apiClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         }
         /// <summary>
         /// Initialize Api Client with baseAddress
@@ -47,7 +63,7 @@ namespace CoreLibrary.Helpers
         /// </summary>
         public void RemoveJwtAuthorization()
         {
-            apiClient.DefaultRequestHeaders.Remove("Authorization");
+            apiClient.DefaultRequestHeaders.Authorization = null;
         }
 
         private readonly int maxRetryAttempts = 3;
@@ -56,13 +72,14 @@ namespace CoreLibrary.Helpers
         public async Task<T> GetAsync<T>(string endPointUrl)
         {
             var response = new HttpResponseMessage();
-            RetryOnException(maxRetryAttempts, pauseBetweenFailures, async () =>
+            await RetryOnExceptionAsync(maxRetryAttempts, pauseBetweenFailures, async () =>
             {
-                response = await apiClient.GetAsync(endPointUrl);
-            });
+                response = await apiClient.GetAsync(endPointUrl).ConfigureAwait(false);
+            }).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
-                return await response.Content.ReadAsAsync<T>();
+                var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                return JsonConvert.DeserializeObject<T>(content);
             }
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
@@ -87,13 +104,14 @@ namespace CoreLibrary.Helpers
             var json = JsonConvert.SerializeObject(data);
             var payload = new StringContent(json, Encoding.UTF8, "application/json");
             var response = new HttpResponseMessage();
-            RetryOnException(maxRetryAttempts, pauseBetweenFailures, async () =>
+            await RetryOnExceptionAsync(maxRetryAttempts, pauseBetweenFailures, async () =>
             {
-                response = await apiClient.PostAsync(endPointUrl, payload);
-            });
+                response = await apiClient.PostAsync(endPointUrl, payload).ConfigureAwait(false);
+            }).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
-                return await response.Content.ReadAsAsync<T>();
+                var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                return JsonConvert.DeserializeObject<T>(content);
             }
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
@@ -116,13 +134,14 @@ namespace CoreLibrary.Helpers
         public async Task<T> DeleteAsync<T>(string endPointUrl)
         {
             var response = new HttpResponseMessage();
-            RetryOnException(maxRetryAttempts, pauseBetweenFailures, async () =>
+            await RetryOnExceptionAsync(maxRetryAttempts, pauseBetweenFailures, async () =>
             {
-                response = await apiClient.DeleteAsync(endPointUrl);
-            });
+                response = await apiClient.DeleteAsync(endPointUrl).ConfigureAwait(false);
+            }).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
-                return await response.Content.ReadAsAsync<T>();
+                var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                return JsonConvert.DeserializeObject<T>(content);
             }
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
@@ -147,13 +166,14 @@ namespace CoreLibrary.Helpers
             var json = JsonConvert.SerializeObject(data);
             var payload = new StringContent(json, Encoding.UTF8, "application/json");
             var response = new HttpResponseMessage();
-            RetryOnException(maxRetryAttempts, pauseBetweenFailures, async () =>
+            await RetryOnExceptionAsync(maxRetryAttempts, pauseBetweenFailures, async () =>
             {
-                response = await apiClient.PutAsync(endPointUrl, payload);
-            });
+                response = await apiClient.PutAsync(endPointUrl, payload).ConfigureAwait(false);
+            }).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
-                return await response.Content.ReadAsAsync<T>();
+                var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                return JsonConvert.DeserializeObject<T>(content);
             }
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
@@ -173,7 +193,7 @@ namespace CoreLibrary.Helpers
             }
         }
 
-        private  void RetryOnException(int times, TimeSpan delay, Action operation)
+        private async Task RetryOnExceptionAsync(int times, TimeSpan delay, Func<Task> operation)
         {
             var attempts = 0;
             do
@@ -181,12 +201,14 @@ namespace CoreLibrary.Helpers
                 try
                 {
                     attempts++;
-                    operation();
-                    break; // Sucess! Lets exit the loop!
+                    await operation().ConfigureAwait(false);
+                    break; // Success! Lets exit the loop!
                 }
                 catch (Exception)
                 {
-                    Task.Delay(delay).Wait();
+                    if (attempts >= times)
+                        throw;
+                    await Task.Delay(delay).ConfigureAwait(false);
                 }
             } while (attempts <= times);
         }
